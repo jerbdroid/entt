@@ -5,7 +5,11 @@ package(default_visibility = ["//:__subpackages__"])
 
 cc_library(
     name = "entt",
-    includes = ["."],
-    hdrs = glob(["**/*.h", "**/*.hpp"]),
+    hdrs = glob([
+        "**/*.h",
+        "**/*.hpp",
+    ]),
     copts = COPTS,
+    defines = ["ENTT_NOEXCEPTION"],
+    includes = ["."],
 )
