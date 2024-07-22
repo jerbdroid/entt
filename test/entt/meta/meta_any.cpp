@@ -17,15 +17,14 @@ struct clazz {
         value = i;
     }
 
-    static void func() {
-        c = 'd';
+    static char func() {
+        return 'c';
     }
 
     operator int() const {
         return value;
     }
 
-    inline static char c = 'c'; // NOLINT
     int value{0};
 };
 
@@ -35,7 +34,7 @@ struct empty {
     empty(const empty &) = default;
     empty &operator=(const empty &) = default;
 
-    virtual ~empty() {
+    virtual ~empty() noexcept {
         ++destructor_counter;
     }
 
@@ -54,7 +53,7 @@ struct fat: empty {
     fat(double v1, double v2, double v3, double v4)
         : value{v1, v2, v3, v4} {}
 
-    ~fat() override = default;
+    ~fat() noexcept override = default;
 
     fat(const fat &) = default;
     fat &operator=(const fat &) = default;
@@ -75,7 +74,7 @@ struct unmanageable {
     unmanageable()
         : value{std::make_unique<int>(3)} {}
 
-    ~unmanageable() = default;
+    ~unmanageable() noexcept = default;
 
     unmanageable(const unmanageable &) = delete;
     unmanageable(unmanageable &&) = delete;
@@ -278,6 +277,19 @@ TEST_F(MetaAny, SBOCopyAssignment) {
     ASSERT_NE(other, entt::meta_any{0});
 }
 
+TEST_F(MetaAny, SBOSelfCopyAssignment) {
+    entt::meta_any any{3};
+
+    // avoid warnings due to self-assignment
+    any = *&any;
+
+    ASSERT_TRUE(any);
+    ASSERT_FALSE(any.try_cast<std::size_t>());
+    ASSERT_EQ(any.cast<int>(), 3);
+    ASSERT_EQ(any, entt::meta_any{3});
+    ASSERT_NE(any, entt::meta_any{0});
+}
+
 TEST_F(MetaAny, SBOMoveConstruction) {
     entt::meta_any any{3};
     entt::meta_any other{std::move(any)};
@@ -305,6 +317,13 @@ TEST_F(MetaAny, SBOMoveAssignment) {
     ASSERT_EQ(other.cast<int>(), 3);
     ASSERT_EQ(other, entt::meta_any{3});
     ASSERT_NE(other, entt::meta_any{0});
+}
+
+ENTT_DEBUG_TEST_F(MetaAnyDeathTest, SBOSelfMoveAssignment) {
+    entt::meta_any any{3};
+
+    // avoid warnings due to self-assignment
+    ASSERT_DEATH(any = std::move(*&any), "");
 }
 
 TEST_F(MetaAny, SBODirectAssignment) {
@@ -548,6 +567,20 @@ TEST_F(MetaAny, NoSBOCopyAssignment) {
     ASSERT_NE(other, fat{});
 }
 
+TEST_F(MetaAny, NoSBOSelfCopyAssignment) {
+    const fat instance{.1, .2, .3, .4};
+    entt::meta_any any{instance};
+
+    // avoid warnings due to self-assignment
+    any = *&any;
+
+    ASSERT_TRUE(any);
+    ASSERT_FALSE(any.try_cast<std::size_t>());
+    ASSERT_EQ(any.cast<fat>(), instance);
+    ASSERT_EQ(any, entt::meta_any{instance});
+    ASSERT_NE(any, fat{});
+}
+
 TEST_F(MetaAny, NoSBOMoveConstruction) {
     const fat instance{.1, .2, .3, .4};
     entt::meta_any any{instance};
@@ -577,6 +610,14 @@ TEST_F(MetaAny, NoSBOMoveAssignment) {
     ASSERT_EQ(other.cast<fat>(), instance);
     ASSERT_EQ(other, entt::meta_any{instance});
     ASSERT_NE(other, fat{});
+}
+
+ENTT_DEBUG_TEST_F(MetaAnyDeathTest, NoSBOSelfMoveAssignment) {
+    const fat instance{.1, .2, .3, .4};
+    entt::meta_any any{instance};
+
+    // avoid warnings due to self-assignment
+    ASSERT_DEATH(any = std::move(*&any), "");
 }
 
 TEST_F(MetaAny, NoSBODirectAssignment) {
@@ -756,6 +797,18 @@ TEST_F(MetaAny, VoidCopyAssignment) {
     ASSERT_EQ(other, entt::meta_any{std::in_place_type<void>});
 }
 
+TEST_F(MetaAny, VoidSelfCopyAssignment) {
+    entt::meta_any any{std::in_place_type<void>};
+
+    // avoid warnings due to self-assignment
+    any = *&any;
+
+    ASSERT_TRUE(any);
+    ASSERT_FALSE(any.try_cast<std::size_t>());
+    ASSERT_EQ(any.type(), entt::resolve<void>());
+    ASSERT_EQ(any, entt::meta_any{std::in_place_type<void>});
+}
+
 TEST_F(MetaAny, VoidMoveConstruction) {
     entt::meta_any any{std::in_place_type<void>};
     const entt::meta_any other{std::move(any)};
@@ -779,6 +832,13 @@ TEST_F(MetaAny, VoidMoveAssignment) {
     ASSERT_TRUE(other);
     ASSERT_EQ(other.type(), entt::resolve<void>());
     ASSERT_EQ(other, entt::meta_any{std::in_place_type<void>});
+}
+
+ENTT_DEBUG_TEST_F(MetaAnyDeathTest, VoidSelfMoveAssignment) {
+    entt::meta_any any{std::in_place_type<void>};
+
+    // avoid warnings due to self-assignment
+    ASSERT_DEATH(any = std::move(*&any), "");
 }
 
 TEST_F(MetaAny, SBOMoveInvalidate) {
@@ -1348,14 +1408,16 @@ TEST_F(MetaAny, Invoke) {
 
     clazz instance;
     auto any = entt::forward_as_meta(instance);
+    const auto result = any.invoke("func"_hs);
 
-    ASSERT_TRUE(any.invoke("func"_hs));
     ASSERT_TRUE(any.invoke("member"_hs, 3));
     ASSERT_FALSE(std::as_const(any).invoke("member"_hs, 3));
     ASSERT_FALSE(std::as_const(any).as_ref().invoke("member"_hs, 3));
     ASSERT_FALSE(any.invoke("non_existent"_hs, 3));
 
-    ASSERT_EQ(clazz::c, 'd');
+    ASSERT_TRUE(result);
+    ASSERT_NE(result.try_cast<char>(), nullptr);
+    ASSERT_EQ(result.cast<char>(), 'c');
     ASSERT_EQ(instance.value, 3);
 }
 
