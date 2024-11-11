@@ -16,7 +16,7 @@
 #include "../../common/meta_traits.h"
 
 struct base {
-    virtual ~base() noexcept = default;
+    virtual ~base() = default;
 
     static void destroy(base &) {
         ++counter;
@@ -47,7 +47,7 @@ struct setter_getter {
         return value = static_cast<int>(val);
     }
 
-    int getter() {
+    [[nodiscard]] int getter() const {
         return value;
     }
 
@@ -55,7 +55,7 @@ struct setter_getter {
         return value = val;
     }
 
-    const int &getter_with_ref() {
+    [[nodiscard]] const int &getter_with_ref() const {
         return value;
     }
 
@@ -110,6 +110,7 @@ struct MetaData: ::testing::Test {
         entt::meta<clazz>()
             .type("clazz"_hs)
             .data<&clazz::i, entt::as_ref_t>("i"_hs)
+            .custom<char>('c')
             .traits(test::meta_traits::one | test::meta_traits::two | test::meta_traits::three)
             .prop(3u, 0)
             .data<&clazz::i, entt::as_cref_t>("ci"_hs)
@@ -200,6 +201,31 @@ TEST_F(MetaData, UserTraits) {
     ASSERT_EQ(entt::resolve<clazz>().data("j"_hs).traits<test::meta_traits>(), test::meta_traits::one);
     ASSERT_EQ(entt::resolve<clazz>().data("h"_hs).traits<test::meta_traits>(), test::meta_traits::two);
     ASSERT_EQ(entt::resolve<clazz>().data("k"_hs).traits<test::meta_traits>(), test::meta_traits::three);
+}
+
+ENTT_DEBUG_TEST_F(MetaDataDeathTest, UserTraits) {
+    using namespace entt::literals;
+
+    using traits_type = entt::internal::meta_traits;
+    constexpr auto value = traits_type{static_cast<std::underlying_type_t<traits_type>>(traits_type::_user_defined_traits) + 1u};
+    ASSERT_DEATH(entt::meta<clazz>().data<&clazz::i>("j"_hs).traits(value), "");
+}
+
+TEST_F(MetaData, Custom) {
+    using namespace entt::literals;
+
+    ASSERT_EQ(*static_cast<const char *>(entt::resolve<clazz>().data("i"_hs).custom()), 'c');
+    ASSERT_EQ(static_cast<const char &>(entt::resolve<clazz>().data("i"_hs).custom()), 'c');
+
+    ASSERT_EQ(static_cast<const int *>(entt::resolve<clazz>().data("i"_hs).custom()), nullptr);
+    ASSERT_EQ(static_cast<const int *>(entt::resolve<clazz>().data("j"_hs).custom()), nullptr);
+}
+
+ENTT_DEBUG_TEST_F(MetaDataDeathTest, Custom) {
+    using namespace entt::literals;
+
+    ASSERT_DEATH([[maybe_unused]] int value = entt::resolve<clazz>().data("i"_hs).custom(), "");
+    ASSERT_DEATH([[maybe_unused]] char value = entt::resolve<clazz>().data("j"_hs).custom(), "");
 }
 
 TEST_F(MetaData, Const) {
@@ -340,7 +366,7 @@ TEST_F(MetaData, SetConvert) {
     using namespace entt::literals;
 
     clazz instance{};
-    instance.h = 1;
+    clazz::h = 1;
 
     ASSERT_EQ(instance.i, 0);
     ASSERT_TRUE(entt::resolve<clazz>().data("i"_hs).set(instance, instance));
@@ -657,21 +683,6 @@ TEST_F(MetaData, SetGetFromBase) {
     ASSERT_EQ(instance.value, 1);
 }
 
-TEST_F(MetaData, Seek) {
-    using namespace entt::literals;
-
-    auto data = entt::resolve<clazz>().data("i"_hs);
-
-    ASSERT_TRUE(data);
-    ASSERT_FALSE(data.prop('c'));
-
-    entt::meta<clazz>()
-        .data("i"_hs)
-        .prop('c');
-
-    ASSERT_TRUE(data.prop('c'));
-}
-
 TEST_F(MetaData, ReRegistration) {
     using namespace entt::literals;
 
@@ -691,6 +702,16 @@ TEST_F(MetaData, ReRegistration) {
     ASSERT_EQ(node.details->data.size(), 2u);
     ASSERT_TRUE(type.data("value"_hs));
     ASSERT_TRUE(type.data("field"_hs));
+
+    entt::meta<base>()
+        .data<&base::value>("field"_hs)
+        .traits(test::meta_traits::one)
+        .custom<int>(3)
+        // this should not overwrite traits and custom data
+        .data<&base::value>("field"_hs);
+
+    ASSERT_EQ(type.data("field"_hs).traits<test::meta_traits>(), test::meta_traits::one);
+    ASSERT_NE(static_cast<const int *>(type.data("field"_hs).custom()), nullptr);
 }
 
 TEST_F(MetaData, CollisionAndReuse) {

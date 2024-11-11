@@ -39,16 +39,16 @@ struct derived: base {
 };
 
 struct abstract {
-    virtual ~abstract() noexcept = default;
+    virtual ~abstract() = default;
 
     virtual void func(int) {}
     void base_only(int) {}
 };
 
 struct concrete: base, abstract {
-    void func(int v) override {
-        abstract::func(v);
-        value = v;
+    void func(int val) override {
+        abstract::func(val);
+        value = val;
     }
 
     int value{3};
@@ -57,8 +57,8 @@ struct concrete: base, abstract {
 struct clazz {
     clazz() = default;
 
-    clazz(const base &, int v)
-        : value{v} {}
+    clazz(const base &, int val)
+        : value{val} {}
 
     void member() {}
     static void func() {}
@@ -71,34 +71,26 @@ struct clazz {
 };
 
 struct overloaded_func {
-    [[nodiscard]] int e(int v) const {
-        return v + v;
+    [[nodiscard]] int f(const base &, int first, int second) {
+        return f(first, second);
     }
 
-    [[nodiscard]] int f(const base &, int a, int b) {
-        return f(a, b);
+    [[nodiscard]] int f(int first, const int second) {
+        value = first;
+        return second * second;
     }
 
-    [[nodiscard]] int f(int a, const int b) {
-        value = a;
-        return g(b);
+    [[nodiscard]] int f(int val) {
+        return 2 * std::as_const(*this).f(val);
     }
 
-    [[nodiscard]] int f(int v) {
-        return 2 * std::as_const(*this).f(v);
+    [[nodiscard]] int f(int val) const {
+        return val * value;
     }
 
-    [[nodiscard]] int f(int v) const {
-        return g(v);
-    }
-
-    [[nodiscard]] float f(int a, const float b) {
-        value = a;
-        return static_cast<float>(e(static_cast<int>(b)));
-    }
-
-    [[nodiscard]] int g(int v) const {
-        return v * v;
+    [[nodiscard]] float f(int first, const float second) {
+        value = first;
+        return second + second;
     }
 
     int value{};
@@ -147,13 +139,11 @@ struct MetaType: ::testing::Test {
 
         entt::meta<overloaded_func>()
             .type("overloaded_func"_hs)
-            .func<&overloaded_func::e>("e"_hs)
             .func<entt::overload<int(const base &, int, int)>(&overloaded_func::f)>("f"_hs)
             .func<entt::overload<int(int, int)>(&overloaded_func::f)>("f"_hs)
             .func<entt::overload<int(int)>(&overloaded_func::f)>("f"_hs)
             .func<entt::overload<int(int) const>(&overloaded_func::f)>("f"_hs)
-            .func<entt::overload<float(int, float)>(&overloaded_func::f)>("f"_hs)
-            .func<&overloaded_func::g>("g"_hs);
+            .func<entt::overload<float(int, float)>(&overloaded_func::f)>("f"_hs);
 
         entt::meta<property_type>()
             .type("property"_hs)
@@ -176,6 +166,7 @@ struct MetaType: ::testing::Test {
 
         entt::meta<clazz>()
             .type("class"_hs)
+            .custom<char>('c')
             .prop(static_cast<entt::id_type>(property_type::value), 3)
             .ctor<const base &, int>()
             .data<&clazz::value>("value"_hs)
@@ -199,8 +190,7 @@ TEST_F(MetaType, Resolve) {
     ASSERT_FALSE(entt::resolve(entt::type_id<void>()));
 
     auto range = entt::resolve();
-    // it could be "char"_hs rather than entt::hashed_string::value("char") if it weren't for a bug in VS2017
-    const auto it = std::find_if(range.begin(), range.end(), [](auto curr) { return curr.second.id() == entt::hashed_string::value("class"); });
+    const auto it = std::find_if(range.begin(), range.end(), [](auto curr) { return curr.second.id() == "class"_hs; });
 
     ASSERT_NE(it, range.end());
     ASSERT_EQ(it->second, entt::resolve<clazz>());
@@ -296,6 +286,25 @@ TEST_F(MetaType, UserTraits) {
     ASSERT_EQ(entt::resolve<unsigned int>().traits<test::meta_traits>(), test::meta_traits::two);
     ASSERT_EQ(entt::resolve<derived>().traits<test::meta_traits>(), test::meta_traits::one | test::meta_traits::three);
     ASSERT_EQ(entt::resolve<property_type>().traits<test::meta_traits>(), test::meta_traits::two | test::meta_traits::three);
+}
+
+ENTT_DEBUG_TEST_F(MetaTypeDeathTest, UserTraits) {
+    using traits_type = entt::internal::meta_traits;
+    constexpr auto value = traits_type{static_cast<std::underlying_type_t<traits_type>>(traits_type::_user_defined_traits) + 1u};
+    ASSERT_DEATH(entt::meta<clazz>().traits(value), "");
+}
+
+TEST_F(MetaType, Custom) {
+    ASSERT_EQ(*static_cast<const char *>(entt::resolve<clazz>().custom()), 'c');
+    ASSERT_EQ(static_cast<const char &>(entt::resolve<clazz>().custom()), 'c');
+
+    ASSERT_EQ(static_cast<const int *>(entt::resolve<clazz>().custom()), nullptr);
+    ASSERT_EQ(static_cast<const int *>(entt::resolve<base>().custom()), nullptr);
+}
+
+ENTT_DEBUG_TEST_F(MetaTypeDeathTest, Custom) {
+    ASSERT_DEATH([[maybe_unused]] int value = entt::resolve<clazz>().custom(), "");
+    ASSERT_DEATH([[maybe_unused]] char value = entt::resolve<base>().custom(), "");
 }
 
 TEST_F(MetaType, RemovePointer) {
@@ -443,8 +452,6 @@ TEST_F(MetaType, OverloadedFunc) {
     entt::meta_any res{};
 
     ASSERT_TRUE(type.func("f"_hs));
-    ASSERT_TRUE(type.func("e"_hs));
-    ASSERT_TRUE(type.func("g"_hs));
 
     res = type.invoke("f"_hs, instance, base{}, 1, 2);
 
@@ -465,14 +472,14 @@ TEST_F(MetaType, OverloadedFunc) {
     ASSERT_TRUE(res);
     ASSERT_EQ(instance.value, 3);
     ASSERT_NE(res.try_cast<int>(), nullptr);
-    ASSERT_EQ(res.cast<int>(), 8);
+    ASSERT_EQ(res.cast<int>(), 12);
 
     res = type.invoke("f"_hs, std::as_const(instance), 2);
 
     ASSERT_TRUE(res);
     ASSERT_EQ(instance.value, 3);
     ASSERT_NE(res.try_cast<int>(), nullptr);
-    ASSERT_EQ(res.cast<int>(), 4);
+    ASSERT_EQ(res.cast<int>(), 6);
 
     res = type.invoke("f"_hs, instance, 0, 1.f);
 
@@ -490,6 +497,46 @@ TEST_F(MetaType, OverloadedFunc) {
 
     // it fails as an ambiguous call
     ASSERT_FALSE(type.invoke("f"_hs, instance, 4, 8.));
+}
+
+TEST_F(MetaType, OverloadedFuncOrder) {
+    using namespace entt::literals;
+
+    const auto type = entt::resolve<overloaded_func>();
+    auto func = type.func("f"_hs);
+
+    ASSERT_TRUE(func);
+    ASSERT_EQ(func.arity(), 3u);
+    ASSERT_FALSE(func.is_const());
+    ASSERT_EQ(func.ret(), entt::resolve<int>());
+
+    func = func.next();
+
+    ASSERT_TRUE(func);
+    ASSERT_EQ(func.arity(), 2u);
+    ASSERT_FALSE(func.is_const());
+    ASSERT_EQ(func.ret(), entt::resolve<int>());
+
+    func = func.next();
+
+    ASSERT_TRUE(func);
+    ASSERT_EQ(func.arity(), 1u);
+    ASSERT_FALSE(func.is_const());
+    ASSERT_EQ(func.ret(), entt::resolve<int>());
+
+    func = func.next();
+
+    ASSERT_TRUE(func);
+    ASSERT_EQ(func.arity(), 1u);
+    ASSERT_TRUE(func.is_const());
+    ASSERT_EQ(func.ret(), entt::resolve<int>());
+
+    func = func.next();
+
+    ASSERT_TRUE(func);
+    ASSERT_EQ(func.arity(), 2u);
+    ASSERT_FALSE(func.is_const());
+    ASSERT_EQ(func.ret(), entt::resolve<float>());
 }
 
 TEST_F(MetaType, Construct) {
@@ -529,7 +576,7 @@ TEST_F(MetaType, ConstructCastAndConvert) {
 }
 
 TEST_F(MetaType, ConstructArithmeticConversion) {
-    auto any = entt::resolve<clazz>().construct(derived{}, clazz{derived{}, true});
+    auto any = entt::resolve<clazz>().construct(derived{}, true);
 
     ASSERT_TRUE(any);
     ASSERT_EQ(any.cast<clazz>().value, 1);
@@ -677,15 +724,15 @@ TEST_F(MetaType, Variables) {
     auto d_data = entt::resolve("double"_hs).data("var"_hs);
 
     property_type prop{property_type::key_only};
-    double d = 3.;
+    double value = 3.;
 
     p_data.set(prop, property_type::random);
-    d_data.set(d, 3.);
+    d_data.set(value, 3.);
 
     ASSERT_EQ(p_data.get(prop).cast<property_type>(), property_type::random);
-    ASSERT_EQ(d_data.get(d).cast<double>(), 3.);
+    ASSERT_EQ(d_data.get(value).cast<double>(), 3.);
     ASSERT_EQ(prop, property_type::random);
-    ASSERT_EQ(d, 3.);
+    ASSERT_EQ(value, 3.);
 }
 
 TEST_F(MetaType, PropertiesAndCornerCases) {
@@ -782,11 +829,20 @@ TEST_F(MetaType, ReRegistration) {
     ASSERT_EQ(count, 0);
     ASSERT_TRUE(entt::resolve("double"_hs));
 
+    entt::meta<double>()
+        .type("real"_hs)
+        .traits(test::meta_traits::one)
+        .custom<int>(3);
+
+    // this should not overwrite traits and custom data
     entt::meta<double>().type("real"_hs);
 
     ASSERT_FALSE(entt::resolve("double"_hs));
     ASSERT_TRUE(entt::resolve("real"_hs));
     ASSERT_TRUE(entt::resolve("real"_hs).data("var"_hs));
+
+    ASSERT_EQ(entt::resolve<double>().traits<test::meta_traits>(), test::meta_traits::one);
+    ASSERT_NE(static_cast<const int *>(entt::resolve<double>().custom()), nullptr);
 }
 
 TEST_F(MetaType, NameCollision) {
